@@ -1,5 +1,6 @@
 import os
 import json
+import sys, getopt
 
 import base64
 import hashlib
@@ -12,12 +13,20 @@ SHA256_ATTR = 'sha256'
 SIZE_ATTR = 'size'
 ISDELTA_ATTR = 'is_delta'
 
-payload_dir = '.'
+#payload_dir = '.'
 
 _HASH_BLOCK_SIZE = 8192
 
+devkey = "/usr/share/update_engine/update-payload-key.key.pem"
+
+private_key = devkey
+
+src_image = ''
+
+### Hashing Functions
+
 class AutoupdateError(Exception):
-  """Exception classes used by this module."""
+    """Exception classes used by this module."""
   pass
 
 class UpdateMetadata(object):
@@ -126,4 +135,77 @@ def GetFileMd5(file_path):
   """Returns the MD5 checksum of the file given (hex encoded)."""
   return binascii.hexlify(GetFileHashes(file_path, do_md5=True)['md5'])
 
-GetLocalPayloadAttrs(payload_dir)
+### Generating update functions
+def GenerateUpdateFile(src_image, image_path, output_dir):
+  """Generates an update gz given a full path to an image.
+
+  Args:
+    image_path: Full path to image.
+  Raises:
+    subprocess.CalledProcessError if the update generator fails to generate a
+    stateful payload.
+  """
+  update_path = os.path.join(output_dir, UPDATE_FILE)
+  _Log('Generating update image %s', update_path)
+
+  update_command = [
+      'cros_generate_update_payload',
+      '--image', image_path,
+      '--output', update_path,
+  ]
+
+  if src_image:
+    update_command.extend(['--src_image', src_image])
+
+  if private_key:
+    update_command.extend(['--private_key', private_key])
+
+  _Log('Running %s', ' '.join(update_command))
+  subprocess.check_call(update_command)
+
+def GenerateUpdateImage(image_path, output_dir):
+  """Force generates an update payload based on the given image_path.
+
+  Args:
+    src_image: image we are updating from (Null/empty for non-delta)
+    image_path: full path to the image.
+    output_dir: the directory to write the update payloads to
+  Raises:
+    AutoupdateError if it failed to generate either update or stateful
+      payload.
+  """
+  _Log('Generating update for image %s', image_path)
+
+  # Delete any previous state in this directory.
+  os.system('rm -rf "%s"' % output_dir)
+  os.makedirs(output_dir)
+
+  try:
+    self.GenerateUpdateFile(src_image, image_path, output_dir)
+  except subprocess.CalledProcessError:
+    os.system('rm -rf "%s"' % output_dir)
+    raise AutoupdateError('Failed to generate update in %s' % output_dir)
+
+
+def main(argv):
+  try:
+    opts, args = getopt.getopt(argv, "d:i:", ["dir=","image="])
+  except getopt.GetoptError:
+    print 'inogenerate_update_hash.py -d <directoryimage> -i <imagefilename>'
+    sys.exit(2)
+  for opt, arg in opts:
+    if opt == '-h':
+      print 'inogenerate_update_hash.py -d <directoryimage> -i <imagefilename>\ne.g:\n\t inogenerate_update_hash.py -d ../build/images/amd64-usr/alpha-452.0.0+2014-10-21-1913-a1 -i coreos_production_image.bin'
+      sys.exit()
+    elif opt in ("-d", "--dir"):
+      payload_dir = arg
+    elif opt in ("-i", "--image"):
+      image_name = arg
+
+  image_path = os.path.join(payload_dir, image_name)
+  GenerateUpdateImage(image_path, payload_dir)
+
+  GetLocalPayloadAttrs(payload_dir)
+
+if __name__ == "__main__":
+  main(sys.argv[1:])
